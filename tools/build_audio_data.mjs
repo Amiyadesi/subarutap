@@ -28,7 +28,7 @@ const entries = Object.entries(sampleFiles).map(([sampleName, relativePath]) => 
 
 const source = [
   '/* 自动生成的音频数据（base64），来源：audio 文件夹中的运行时 WAV */',
-  'const AUDIO_B64 = {',
+  'window.AUDIO_B64 = {',
   ...entries,
   '};',
   '',

@@ -204,10 +204,7 @@ for (const [sfxId, expectedSamples] of Object.entries(expectedSfxSamples)) {
 
 const audioSandbox = {};
 vm.runInNewContext(
-  fs.readFileSync(audioDataPath, 'utf8').replace(
-    'const AUDIO_B64',
-    'globalThis.AUDIO_B64',
-  ),
+  fs.readFileSync(audioDataPath, 'utf8').replace('window.AUDIO_B64', 'globalThis.AUDIO_B64'),
   audioSandbox,
 );
 for (const sample of sampleNames) {
