@@ -16,13 +16,6 @@ const sampleFiles = Object.freeze({
   da: 'da.wav',
   gou: 'gou.wav',
   jiao: 'jiao.wav',
-  // Keep the runtime keys stable while embedding the user's denoised revisions.
-  ha: 'ha_new.wav',
-  ji: 'ji_new.wav',
-  mi: 'mi_new.wav',
-  dingdongji_ding: 'dingdongji_ding.wav',
-  dingdongji_dong: 'dingdongji_dong.wav',
-  dingdongji_ji: 'dingdongji_ji.wav',
 });
 
 const entries = Object.entries(sampleFiles).map(([sampleName, relativePath]) => {
