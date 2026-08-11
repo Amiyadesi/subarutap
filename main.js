@@ -43,6 +43,37 @@ const DEATH_EFFECTS = Object.freeze([
   { type: 'impact', color: '#efd28b' },
   { type: 'lightning', color: '#8bd8ff' },
 ]);
+const C = {
+  cream: '#fff2dc',
+  amber: '#ffb400',
+  gray: '#87837e',
+  coral: '#ff5a5f',
+  teal: '#16c2a3',
+  blue: '#3e7bfa',
+};
+const ACCENTS = [C.coral, C.teal, C.blue];
+const EFFECTS = [
+  'rings',
+  'poly',
+  'spiral',
+  'rays',
+  'confetti',
+  'zigzag',
+  'pop',
+  'cross',
+  'orbit',
+  'wave',
+  'stars',
+  'grid',
+];
+
+function pickColor(rng) {
+  const value = rng();
+  if (value < 0.62) return C.amber;
+  if (value < 0.9) return C.gray;
+  return ACCENTS[(rng() * ACCENTS.length) | 0];
+}
+
 const AVATAR_ACTIONS = Object.freeze({
   knife: 'hit',
   rabbits: 'hit',
@@ -56,20 +87,6 @@ const AVATAR_ACTIONS = Object.freeze({
   void: 'void',
   impact: 'fall',
   lightning: 'burst',
-});
-const PIECE_COUNTS = Object.freeze({
-  knife: 18,
-  rabbits: 22,
-  choke: 18,
-  hand: 18,
-  mace: 16,
-  wind: 20,
-  freeze: 18,
-  burst: 20,
-  split: 18,
-  void: 20,
-  impact: 18,
-  lightning: 18,
 });
 const CHORDS = Object.freeze([
   { notes: [261.63, 329.63, 392], bass: 65.41 },
@@ -98,7 +115,6 @@ const avatarFrame = document.getElementById('avatar-frame');
 const musicToggle = document.getElementById('music-toggle');
 const sfxToggle = document.getElementById('sfx-toggle');
 const buffers = {};
-const deathFx = [];
 const lastTapSlots = new Map();
 
 let audio = null;
@@ -113,15 +129,8 @@ let audioInitPromise = null;
 let started = false;
 let musicOn = true;
 let sfxOn = true;
-let frameTime = 0;
 let avatarActionTimer = 0;
-
-function resizeFx() {
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
-  fx.width = Math.round(innerWidth * ratio);
-  fx.height = Math.round(innerHeight * ratio);
-  fx2d.setTransform(ratio, 0, 0, ratio, 0, 0);
-}
+let corpseLaunchIndex = Math.floor(Math.random() * 24);
 
 function decodeBase64(base64) {
   const binary = atob(base64);
@@ -306,10 +315,10 @@ function quantizedTapTime() {
 function playSample(index) {
   const sampleName = VOICE_SAMPLES[index];
   const buffer = buffers[sampleName];
-  if (!buffer) return;
+  if (!buffer) return null;
   const time = quantizedTapTime();
   const slot = Math.round((time - musicStartTime) / S8);
-  if (lastTapSlots.get(index) === slot) return;
+  if (lastTapSlots.get(index) === slot) return time;
   lastTapSlots.set(index, slot);
 
   const source = audio.createBufferSource();
@@ -324,6 +333,7 @@ function playSample(index) {
   );
   source.connect(gain).connect(sfxBus);
   source.start(time);
+  return time;
 }
 
 function zoneIndexAt(x, y) {
@@ -360,6 +370,19 @@ function flashZone(index, color) {
 function spawnCorpse(type) {
   const corpse = document.createElement('div');
   corpse.className = 'corpse corpse-' + type;
+  corpseLaunchIndex = (corpseLaunchIndex + 5) % 24;
+  const angle = corpseLaunchIndex * Math.PI / 12;
+  const distance = Math.hypot(innerWidth, innerHeight) * 0.62;
+  const launchX = Math.cos(angle) * distance;
+  const launchY = Math.sin(angle) * distance;
+  corpse.style.setProperty('--corpse-mid-x', (-launchX * 0.05).toFixed(1) + 'px');
+  corpse.style.setProperty('--corpse-mid-y', (-launchY * 0.05).toFixed(1) + 'px');
+  corpse.style.setProperty('--corpse-fade-x', (launchX * 0.68).toFixed(1) + 'px');
+  corpse.style.setProperty('--corpse-fade-y', (launchY * 0.68).toFixed(1) + 'px');
+  corpse.style.setProperty('--corpse-x', launchX.toFixed(1) + 'px');
+  corpse.style.setProperty('--corpse-y', launchY.toFixed(1) + 'px');
+  corpse.style.setProperty('--corpse-fade-rotate', (corpseLaunchIndex % 2 ? -96 : 96) + 'deg');
+  corpse.style.setProperty('--corpse-rotate', (corpseLaunchIndex % 2 ? -150 : 150) + 'deg');
   const image = avatar.cloneNode(false);
   image.removeAttribute('id');
   image.alt = '';
@@ -381,285 +404,616 @@ function animateAvatar(type) {
   }, 820);
 }
 
-function triggerZone(index, x = innerWidth / 2, y = innerHeight / 2) {
+function triggerZone(index) {
   if (!Number.isInteger(index) || !DEATH_EFFECTS[index]) return;
   if (!started) {
-    void startAudio().then(() => triggerZone(index, x, y)).catch((error) => console.error('Tap start failed:', error));
+    void startAudio().then(() => triggerZone(index)).catch((error) => console.error('Tap start failed:', error));
     return;
   }
   if (audio.state === 'suspended') void audio.resume().catch(() => {});
   const effect = DEATH_EFFECTS[index];
   spawnCorpse(effect.type);
   animateAvatar(effect.type);
-  if (sfxOn) playSample(index);
+  const when = sfxOn ? playSample(index) : audio.currentTime;
   flashZone(index, effect.color);
-  spawnDeathEffect(effect, x, y);
+  spawnEffect(index, when);
 }
 
-function clamp01(value) {
-  return Math.max(0, Math.min(1, value));
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
 }
 
-function easeOutBack(value) {
-  const t = clamp01(value) - 1;
-  return 1 + 2.2 * t * t * t + 1.2 * t * t;
-}
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+const smooth = t => t * t * (3 - 2 * t);
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeOutBack = t => { const c = 1.70158, u = t - 1; return 1 + (c + 1) * u * u * u + c * u * u; };
+const easeOutElastic = t =>
+  t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * (2 * Math.PI / 3)) + 1;
 
-function polygon(context, sides, radius, rotation = 0) {
-  context.beginPath();
-  for (let i = 0; i < sides; i += 1) {
-    const angle = rotation + Math.PI * 2 * i / sides;
-    const x = Math.cos(angle) * radius;
-    const y = Math.sin(angle) * radius;
-    if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+function tracePoly(g, x, y, r, sides, rot) {
+  g.beginPath();
+  for (let i = 0; i < sides; i++) {
+    const a = rot + (i * 2 * Math.PI) / sides;
+    const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+    i ? g.lineTo(px, py) : g.moveTo(px, py);
   }
-  context.closePath();
+  g.closePath();
 }
 
-function star(context, radius, spikes = 8) {
-  context.beginPath();
-  for (let i = 0; i < spikes * 2; i += 1) {
-    const angle = -Math.PI / 2 + Math.PI * i / spikes;
-    const length = i % 2 ? radius * 0.42 : radius;
-    const x = Math.cos(angle) * length;
-    const y = Math.sin(angle) * length;
-    if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+function traceStar(g, x, y, r, points, rot) {
+  g.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const rr = i % 2 ? r * 0.46 : r;
+    const a = rot + (i * Math.PI) / points;
+    const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+    i ? g.lineTo(px, py) : g.moveTo(px, py);
   }
-  context.closePath();
+  g.closePath();
 }
 
-function drawRabbit(context, size, color) {
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  context.strokeStyle = '#090b16';
-  context.fillStyle = '#f5d8cf';
-  context.beginPath();
-  context.ellipse(-size * 0.3, -size * 0.48, size * 0.16, size * 0.38, -0.12, 0, Math.PI * 2);
-  context.ellipse(size * 0.3, -size * 0.48, size * 0.16, size * 0.38, 0.12, 0, Math.PI * 2);
-  context.fill(); context.stroke();
-  context.fillStyle = color;
-  context.beginPath();
-  context.ellipse(-size * 0.3, -size * 0.5, size * 0.07, size * 0.25, -0.12, 0, Math.PI * 2);
-  context.ellipse(size * 0.3, -size * 0.5, size * 0.07, size * 0.25, 0.12, 0, Math.PI * 2);
-  context.fill();
-  context.fillStyle = '#f5d8cf';
-  context.beginPath(); context.arc(0, size * 0.03, size * 0.46, 0, Math.PI * 2); context.fill(); context.stroke();
-  context.fillStyle = '#090b16';
-  context.beginPath(); context.arc(-size * 0.16, 0, size * 0.055, 0, Math.PI * 2); context.arc(size * 0.16, 0, size * 0.055, 0, Math.PI * 2); context.fill();
-}
-
-function drawKnife(context, size, color) {
-  context.lineCap = 'round';
-  context.lineWidth = Math.max(1.5, size * 0.08);
-  context.strokeStyle = '#090b16';
-  context.fillStyle = '#f4f0ed';
-  context.beginPath();
-  context.moveTo(-size * 0.6, size * 0.45);
-  context.lineTo(size * 0.48, -size * 0.5);
-  context.lineTo(size * 0.62, -size * 0.28);
-  context.lineTo(-size * 0.45, size * 0.57);
-  context.closePath(); context.fill(); context.stroke();
-  context.strokeStyle = color;
-  context.lineWidth = size * 0.2;
-  context.beginPath(); context.moveTo(-size * 0.62, size * 0.62); context.lineTo(-size * 0.28, size * 0.28); context.stroke();
-}
-
-function drawLoop(context, size, color) {
-  context.lineWidth = Math.max(2, size * 0.09);
-  context.strokeStyle = color;
-  context.beginPath(); context.ellipse(0, size * 0.05, size * 0.54, size * 0.35, -0.2, 0, Math.PI * 2); context.stroke();
-  context.strokeStyle = '#f4f0ed';
-  context.lineWidth = Math.max(1, size * 0.035);
-  context.beginPath(); context.arc(0, size * 0.05, size * 0.42, 0, Math.PI * 1.55); context.stroke();
-}
-
-function drawHand(context, size, color) {
-  context.fillStyle = '#090b16';
-  context.strokeStyle = color;
-  context.lineWidth = Math.max(1.5, size * 0.06);
-  context.beginPath(); context.roundRect(-size * 0.28, -size * 0.05, size * 0.56, size * 0.62, size * 0.18); context.fill(); context.stroke();
-  for (let i = -2; i <= 2; i += 1) {
-    const x = i * size * 0.13;
-    context.beginPath(); context.roundRect(x - size * 0.06, -size * 0.52 - Math.abs(i) * size * 0.03, size * 0.12, size * 0.58, size * 0.06); context.fill(); context.stroke();
+/* 画一个小几何体（特效的基本粒子） */
+function drawPiece(g, kind, color, x, y, r, rot) {
+  if (r <= 0) return;
+  g.save();
+  g.translate(x, y);
+  g.rotate(rot || 0);
+  switch (kind) {
+    case 'circle':
+      g.fillStyle = color;
+      g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill();
+      break;
+    case 'ring':
+      g.strokeStyle = color;
+      g.lineWidth = Math.max(2, r * 0.3);
+      g.beginPath(); g.arc(0, 0, r, 0, 7); g.stroke();
+      break;
+    case 'square':
+      g.fillStyle = color;
+      g.fillRect(-r, -r, r * 2, r * 2);
+      break;
+    case 'triangle':
+      g.fillStyle = color;
+      tracePoly(g, 0, 0, r * 1.2, 3, -Math.PI / 2); g.fill();
+      break;
+    case 'diamond':
+      g.fillStyle = color;
+      tracePoly(g, 0, 0, r * 1.15, 4, 0); g.fill();
+      break;
+    case 'hexagon':
+      g.fillStyle = color;
+      tracePoly(g, 0, 0, r * 1.1, 6, 0); g.fill();
+      break;
+    case 'star':
+      g.fillStyle = color;
+      traceStar(g, 0, 0, r * 1.25, 5, -Math.PI / 2); g.fill();
+      break;
+    case 'cross': {
+      g.fillStyle = color;
+      const w = r * 0.62;
+      g.fillRect(-r, -w / 2, r * 2, w);
+      g.fillRect(-w / 2, -r, w, r * 2);
+      break;
+    }
   }
+  g.restore();
 }
 
-function drawMace(context, size, color) {
-  context.lineCap = 'round';
-  context.strokeStyle = '#f4f0ed';
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  context.beginPath(); context.moveTo(-size * 0.55, size * 0.55); context.lineTo(size * 0.28, -size * 0.22); context.stroke();
-  context.fillStyle = color;
-  context.strokeStyle = '#090b16';
-  context.lineWidth = Math.max(1.5, size * 0.08);
-  context.beginPath(); context.arc(size * 0.4, -size * 0.38, size * 0.25, 0, Math.PI * 2); context.fill(); context.stroke();
-  for (let i = 0; i < 6; i += 1) {
-    const angle = Math.PI * 2 * i / 6;
-    context.beginPath();
-    context.moveTo(size * 0.4 + Math.cos(angle) * size * 0.23, -size * 0.38 + Math.sin(angle) * size * 0.23);
-    context.lineTo(size * 0.4 + Math.cos(angle) * size * 0.38, -size * 0.38 + Math.sin(angle) * size * 0.38);
-    context.stroke();
-  }
+/* ============================================================
+ * 全屏特效引擎（仿 Mikutap）
+ *  - 每次触发生成一个全屏特效实例，叠在旧特效之上
+ *  - 旧特效播放退场动画后移除
+ *  - 页面背景平滑过渡到新特效的落幕背景色
+ * ==========================================================*/
+const FX_IN = 0.55;    // 入场时长（秒）
+const FX_OUT = 0.4;    // 退场时长（秒）
+
+let fxW = 0, fxH = 0;  // 画布尺寸（CSS 像素）
+let fxList = [];       // 活跃特效（数组顺序 = 叠放顺序）
+let beatP = 0;         // 节拍脉冲 0..1（tick 每帧更新）
+
+function nowSec() { return audio ? audio.currentTime : performance.now() / 1000; }
+const prog = (t, delay, dur = FX_IN) => clamp01((t - delay) / dur);
+const cx0 = () => fxW / 2, cy0 = () => fxH / 2;   // 屏幕正中心
+
+function resizeFx() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  fxW = innerWidth; fxH = innerHeight;
+  fx.width = Math.round(fxW * dpr);
+  fx.height = Math.round(fxH * dpr);
+  fx.style.width = fxW + 'px';
+  fx.style.height = fxH + 'px';
+  fx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 活跃特效重新对齐屏幕正中心
+  for (const e of fxList) { e.cx = cx0(); e.cy = cy0(); }
 }
 
-function drawWind(context, size, color) {
-  context.strokeStyle = color;
-  context.lineCap = 'round';
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  for (let i = -1; i <= 1; i += 1) {
-    context.beginPath();
-    context.moveTo(-size * 0.65, i * size * 0.22);
-    context.bezierCurveTo(-size * 0.15, -size * 0.55 + i * size * 0.22, size * 0.2, size * 0.55 + i * size * 0.22, size * 0.7, i * size * 0.05);
-    context.stroke();
-  }
-}
-
-function drawFreeze(context, size, color) {
-  context.fillStyle = '#f4f0ed';
-  context.strokeStyle = color;
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  polygon(context, 6, size * 0.55, Math.PI / 6); context.fill(); context.stroke();
-  context.lineWidth = Math.max(1, size * 0.04);
-  for (let i = 0; i < 3; i += 1) {
-    const angle = i * Math.PI / 3;
-    context.beginPath(); context.moveTo(0, 0); context.lineTo(Math.cos(angle) * size * 0.5, Math.sin(angle) * size * 0.5); context.stroke();
-  }
-}
-
-function drawBurst(context, size, color) {
-  context.fillStyle = color;
-  context.strokeStyle = '#090b16';
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  star(context, size * 0.6, 8); context.fill(); context.stroke();
-}
-
-function drawSplit(context, size, color) {
-  context.fillStyle = color;
-  context.strokeStyle = '#090b16';
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  context.beginPath(); context.moveTo(-size * 0.58, -size * 0.55); context.lineTo(-size * 0.04, -size * 0.14); context.lineTo(-size * 0.22, size * 0.6); context.lineTo(-size * 0.65, size * 0.36); context.closePath(); context.fill(); context.stroke();
-  context.beginPath(); context.moveTo(size * 0.58, -size * 0.55); context.lineTo(size * 0.04, -size * 0.14); context.lineTo(size * 0.22, size * 0.6); context.lineTo(size * 0.65, size * 0.36); context.closePath(); context.fill(); context.stroke();
-}
-
-function drawVoid(context, size, color) {
-  context.fillStyle = '#090b16';
-  context.strokeStyle = color;
-  context.lineWidth = Math.max(1.5, size * 0.08);
-  context.beginPath();
-  context.moveTo(-size * 0.48, size * 0.5);
-  context.bezierCurveTo(-size * 0.72, size * 0.05, -size * 0.25, -size * 0.12, -size * 0.48, -size * 0.58);
-  context.bezierCurveTo(-size * 0.08, -size * 0.42, size * 0.05, -size * 0.25, size * 0.45, -size * 0.66);
-  context.bezierCurveTo(size * 0.22, -size * 0.08, size * 0.74, size * 0.16, size * 0.48, size * 0.58);
-  context.bezierCurveTo(size * 0.1, size * 0.35, size * 0.02, size * 0.8, -size * 0.48, size * 0.5);
-  context.closePath(); context.fill(); context.stroke();
-}
-
-function drawImpact(context, size, color) {
-  context.fillStyle = color;
-  context.strokeStyle = '#090b16';
-  context.lineWidth = Math.max(1.5, size * 0.08);
-  star(context, size * 0.62, 7); context.fill(); context.stroke();
-  context.fillStyle = '#f4f0ed';
-  context.beginPath(); context.arc(0, 0, size * 0.16, 0, Math.PI * 2); context.fill();
-}
-
-function drawLightning(context, size, color) {
-  context.fillStyle = color;
-  context.strokeStyle = '#090b16';
-  context.lineWidth = Math.max(1.5, size * 0.07);
-  context.beginPath();
-  context.moveTo(size * 0.18, -size * 0.68);
-  context.lineTo(-size * 0.1, -size * 0.12);
-  context.lineTo(size * 0.18, -size * 0.12);
-  context.lineTo(-size * 0.22, size * 0.68);
-  context.lineTo(-size * 0.04, size * 0.08);
-  context.lineTo(-size * 0.3, size * 0.08);
-  context.closePath(); context.fill(); context.stroke();
-}
-
-function drawDeathPiece(context, type, size, color, rotation, alpha, pulse) {
-  context.save();
-  context.translate(0, pulse * size * 0.08);
-  context.rotate(rotation);
-  context.globalAlpha = alpha;
-  if (type === 'knife') drawKnife(context, size, color);
-  else if (type === 'rabbits') drawRabbit(context, size, color);
-  else if (type === 'choke') drawLoop(context, size, color);
-  else if (type === 'hand') drawHand(context, size, color);
-  else if (type === 'mace') drawMace(context, size, color);
-  else if (type === 'wind') drawWind(context, size, color);
-  else if (type === 'freeze') drawFreeze(context, size, color);
-  else if (type === 'burst') drawBurst(context, size, color);
-  else if (type === 'split') drawSplit(context, size, color);
-  else if (type === 'void') drawVoid(context, size, color);
-  else if (type === 'impact') drawImpact(context, size, color);
-  else drawLightning(context, size, color);
-  context.restore();
-}
-
-function spawnDeathEffect(effect, clickX, clickY) {
-  const minDimension = Math.min(innerWidth, innerHeight);
-  const edge = Math.min(76, Math.max(24, minDimension * 0.07));
-  const pieces = [];
-  const count = PIECE_COUNTS[effect.type] || 18;
-  for (let i = 0; i < count; i += 1) {
-    const centerBias = i < 3;
-    pieces.push({
-      x: centerBias ? clickX + (Math.random() - 0.5) * minDimension * 0.34 : edge + Math.random() * Math.max(1, innerWidth - edge * 2),
-      y: centerBias ? clickY + (Math.random() - 0.5) * minDimension * 0.34 : edge + Math.random() * Math.max(1, innerHeight - edge * 2),
-      vx: (Math.random() - 0.5) * minDimension * 0.05,
-      vy: (Math.random() - 0.5) * minDimension * 0.045 - minDimension * 0.01,
-      size: Math.max(18, Math.min(64, minDimension * (0.027 + Math.random() * 0.038))),
-      rotation: (Math.random() - 0.5) * Math.PI,
-      spin: (Math.random() - 0.5) * 3.6,
-      delay: Math.random() * 0.14,
-      phase: Math.random() * Math.PI * 2,
+/* ---------- 各特效的随机参数预生成（出生即定型，之后纯函数绘制） ----------
+ * 中心化特效最大直径 ≈ 0.85~0.92 倍屏幕短边；
+ * 零散小元件（纸屑 / 星星 / 几何雨）则随机散布全屏任意位置 */
+const BUILD = {
+  rings(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    for (let i = 0; i < 7; i++) inst.shapes.push({
+      delay: i * 0.05,
+      rEnd: minD * (0.13 + rng() * 0.29),   // 最大直径 ≈ 0.84 短边
+      w: 3 + rng() * 7,
+      color: pickColor(rng),
     });
+    inst.dotR = minD * 0.07;
+  },
+  poly(inst, rng) {
+    const sides = 3 + (rng() * 5 | 0);
+    const minD = Math.min(fxW, fxH);
+    [[0.46, C.amber, 0], [0.3, C.gray, 0.09], [0.17, C.amber, 0.18]].forEach(([s, color, d], i) =>
+      inst.shapes.push({
+        sides, delay: d, color,
+        rEnd: minD * s,                       // 最大直径 ≈ 0.92 短边
+        w: minD * (0.024 - i * 0.006),
+      }));
+  },
+  spiral(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    for (let i = 0; i < 36; i++) inst.shapes.push({
+      ang: i * 0.55,
+      rad: 6 + i * minD * 0.0125,             // 最大直径 ≈ 0.88 短边
+      size: minD * (0.009 + i * 0.0008),
+      delay: i * 0.018,
+      color: pickColor(rng),
+    });
+  },
+  rays(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    const n = 13 + (rng() * 4 | 0);
+    inst.r0 = minD * 0.06;
+    for (let i = 0; i < n; i++) inst.shapes.push({
+      ang: (i / n) * 2 * Math.PI + rng() * 0.15,
+      w: 0.09 + rng() * 0.13,
+      len: minD * (0.36 + rng() * 0.1),       // 最大直径 ≈ 0.92 短边
+      delay: rng() * 0.12,
+      color: rng() < 0.12 ? ACCENTS[(rng() * 3) | 0] : (i % 2 ? C.gray : C.amber),
+    });
+  },
+  confetti(inst, rng) {
+    const maxD = Math.hypot(fxW, fxH);
+    const minD = Math.min(fxW, fxH);
+    const kinds = ['square', 'circle', 'triangle', 'diamond'];
+    for (let i = 0; i < 30; i++) inst.shapes.push({
+      ang: rng() * 2 * Math.PI,
+      dist: maxD * (0.12 + rng() * 0.46),
+      size: minD * (0.026 + rng() * 0.05),
+      spin: inst.dir * (1 + rng() * 2) * 2.2,
+      delay: rng() * 0.18,
+      kind: kinds[(rng() * 4) | 0],
+      color: pickColor(rng),
+    });
+  },
+  zigzag(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    const horiz = rng() < 0.5;
+    const n = 5 + (rng() * 3 | 0);
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const f = i / n;
+      if (horiz) pts.push({
+        x: -fxW * 0.08 + f * fxW * 1.16,
+        y: fxH * (i % 2 ? 0.72 + rng() * 0.14 : 0.14 + rng() * 0.14),
+      });
+      else pts.push({
+        x: fxW * (i % 2 ? 0.7 + rng() * 0.16 : 0.14 + rng() * 0.16),
+        y: -fxH * 0.08 + f * fxH * 1.16,
+      });
+    }
+    const lens = [];
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const l = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      lens.push(l); total += l;
+    }
+    inst.shapes.push({ pts, lens, total, w: minD * (0.02 + rng() * 0.022), color: C.amber });
+  },
+  pop(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    const kinds = ['circle', 'square', 'ring', 'triangle', 'hexagon'];
+    for (let i = 0; i < 16; i++) inst.shapes.push({
+      x: fxW * (0.06 + rng() * 0.88),
+      y: fxH * (0.06 + rng() * 0.88),
+      size: minD * (0.036 + rng() * 0.06),
+      delay: rng() * 0.28,
+      rot: rng() * Math.PI,
+      kind: kinds[(rng() * kinds.length) | 0],
+      color: pickColor(rng),
+    });
+  },
+  cross(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    const size = minD * (0.6 + rng() * 0.25);   // 臂长 0.6~0.85 短边
+    inst.shapes.push({
+      size,
+      w: size * (0.14 + rng() * 0.08),
+      color: rng() < 0.2 ? ACCENTS[(rng() * 3) | 0] : C.amber,
+    });
+  },
+  orbit(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    const kinds = ['circle', 'square', 'triangle', 'ring'];
+    const n = 10;
+    for (let i = 0; i < n; i++) inst.shapes.push({
+      ang0: (i / n) * 2 * Math.PI,
+      rad: minD * (0.18 + rng() * 0.24),        // 轨道直径 ≤ 0.84 短边
+      speed: inst.dir * (0.45 + rng() * 0.5),
+      size: minD * (0.026 + rng() * 0.032),
+      delay: rng() * 0.15,
+      kind: kinds[i % 4],
+      color: pickColor(rng),
+    });
+    inst.coreR = minD * 0.055;
+  },
+  wave(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    for (let i = 0; i < 4; i++) inst.shapes.push({
+      y0: fxH * (0.14 + i * 0.24) + (rng() - 0.5) * fxH * 0.08,
+      amp: minD * (0.03 + rng() * 0.05),
+      wl: fxW * (0.45 + rng() * 0.4),
+      speed: inst.dir * (1 + rng() * 1.2),
+      th: minD * (0.07 + rng() * 0.06),
+      side: i % 2 ? 1 : -1,
+      delay: i * 0.08,
+      color: rng() < 0.12 ? ACCENTS[(rng() * 3) | 0] : (i % 2 ? C.gray : C.amber),
+    });
+  },
+  stars(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    for (let i = 0; i < 12; i++) inst.shapes.push({
+      x: fxW * (0.07 + rng() * 0.86),
+      y: fxH * (0.07 + rng() * 0.86),
+      r: minD * (0.034 + rng() * 0.055),
+      delay: rng() * 0.25,
+      rot: rng() * Math.PI,
+      color: pickColor(rng),
+    });
+  },
+  grid(inst, rng) {
+    const minD = Math.min(fxW, fxH);
+    const n = 11;
+    const radius = minD * (0.4 + rng() * 0.04);   // 直径 0.8~0.88 短边
+    const lines = [];
+    for (let i = 0; i < n; i++) lines.push({
+      y: (i - (n - 1) / 2) * (radius * 2 / n),
+      w: 2.5 + ((i * 7) % 3) * 3,
+      delay: i * 0.045,
+      color: i % 2 ? C.gray : C.amber,
+    });
+    inst.shapes.push({ radius, lines });
+  },
+};
+
+/* ---------- 各特效的绘制（t = 出生至今秒数，fade = 退场透明度） ----------
+ * beatP 为节拍脉冲：所有特效都随节拍明显缩放 / 增粗 / 增亮 */
+const DRAW = {
+  /* 同心环爆发：圆环扩张后呼吸胀缩，随节拍增粗（律动只做运动，不变色） */
+  rings(g, inst, t, fade) {
+    const minD = Math.min(fxW, fxH);
+    inst.shapes.forEach((s, i) => {
+      const k = easeOutCubic(prog(t, s.delay));
+      if (k <= 0) return;
+      const r = k * s.rEnd * (1 + 0.04 * Math.sin(t * 1.4 + i)) + beatP * minD * 0.03;
+      g.globalAlpha = (1 - k * 0.5) * fade;
+      g.strokeStyle = s.color;
+      g.lineWidth = s.w * (1 + beatP * 1.3);
+      g.beginPath(); g.arc(inst.cx, inst.cy, r, 0, 7); g.stroke();
+    });
+    const dk = easeOutBack(prog(t, 0));
+    if (dk > 0) {
+      g.globalAlpha = fade;
+      g.fillStyle = C.amber;
+      g.beginPath(); g.arc(inst.cx, inst.cy, inst.dotR * dk * (1 + beatP * 0.45), 0, 7); g.fill();
+    }
+  },
+
+  /* 多边形绽放：三层多边形描边放大并旋转，随节拍胀缩 */
+  poly(g, inst, t, fade) {
+    const minD = Math.min(fxW, fxH);
+    inst.shapes.forEach((s, i) => {
+      const k = easeOutCubic(prog(t, s.delay));
+      if (k <= 0) return;
+      const r = k * s.rEnd * (1 + beatP * 0.08 + 0.03 * Math.sin(t * 1.1 + i * 1.9));
+      const rot = inst.rot0 + inst.dir * (1 - k) * 1.3 + t * 0.18 * inst.dir;
+      g.globalAlpha = (1 - k * 0.3) * fade;
+      g.strokeStyle = s.color;
+      g.lineWidth = s.w * (1 + beatP * 0.9) + beatP * minD * 0.004;
+      tracePoly(g, inst.cx, inst.cy, r, s.sides, rot);
+      g.stroke();
+    });
+  },
+
+  /* 螺旋弹珠：圆点沿螺旋线依次弹出，整体旋转，随节拍跳动 */
+  spiral(g, inst, t, fade) {
+    const rot = inst.rot0 + t * 0.45 * inst.dir + beatP * 0.12 * inst.dir;
+    inst.shapes.forEach((s, i) => {
+      const k = easeOutBack(prog(t, s.delay));
+      if (k <= 0) return;
+      const a = s.ang + rot;
+      const r = s.rad * k * (1 + beatP * 0.1) + Math.sin(t * 1.5 + i * 0.5) * 4;
+      const x = inst.cx + Math.cos(a) * r;
+      const y = inst.cy + Math.sin(a) * r;
+      const sz = s.size * k * (1 + beatP * 0.6);
+      g.globalAlpha = fade;
+      drawPiece(g, i % 6 === 5 ? 'square' : 'circle', s.color, x, y, sz, a);
+    });
+  },
+
+  /* 放射光芒：楔形光刃旋出，缓慢自转，随节拍伸长 */
+  rays(g, inst, t, fade) {
+    for (const s of inst.shapes) {
+      const k = easeOutCubic(prog(t, s.delay, 0.5));
+      if (k <= 0) continue;
+      const rot = inst.rot0 + inst.dir * (1 - k) * 0.8 + t * 0.14 * inst.dir;
+      const len = s.len * k * (1 + beatP * 0.22);
+      const a = s.ang + rot;
+      g.globalAlpha = 0.88 * fade;
+      g.fillStyle = s.color;
+      g.beginPath();
+      g.moveTo(inst.cx, inst.cy);
+      g.arc(inst.cx, inst.cy, inst.r0 + len, a - s.w, a + s.w);
+      g.closePath(); g.fill();
+    }
+  },
+
+  /* 几何纸屑：小几何体从中心炸开，漂浮 + 随节拍颠簸 */
+  confetti(g, inst, t, fade) {
+    inst.shapes.forEach((s, i) => {
+      const k = easeOutBack(prog(t, s.delay));
+      if (k <= 0) return;
+      const x = inst.cx + Math.cos(s.ang) * s.dist * k * (1 + beatP * 0.06);
+      const y = inst.cy + Math.sin(s.ang) * s.dist * k * (1 + beatP * 0.06)
+        + Math.sin(t * 2.2 + i * 1.3) * 6;
+      const sz = s.size * k * (1 + beatP * 0.4);
+      const rot = s.spin * k + t * 0.6 * inst.dir;
+      g.globalAlpha = fade;
+      drawPiece(g, s.kind, s.color, x, y, sz, rot);
+    });
+  },
+
+  /* 折线穿越：粗折线横扫全屏（带灰色重影），端点圆点随节拍猛跳 */
+  zigzag(g, inst, t, fade) {
+    const s = inst.shapes[0];
+    const k = easeOutCubic(prog(t, 0, 0.6));
+    if (k <= 0) return;
+    g.save();
+    g.translate(0, Math.sin(t * 1.6) * 7);
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    // 灰色重影
+    g.save();
+    g.translate(0, s.w * 2.1);
+    g.globalAlpha = 0.4 * fade;
+    g.strokeStyle = C.gray;
+    g.lineWidth = s.w * (1 + beatP * 0.5);
+    strokePartial(g, s.pts, s.lens, k * s.total);
+    g.stroke();
+    g.restore();
+    // 主折线
+    g.globalAlpha = fade;
+    g.strokeStyle = s.color;
+    g.lineWidth = s.w * (1 + beatP * 0.7);
+    const tip = strokePartial(g, s.pts, s.lens, k * s.total);
+    g.stroke();
+    g.fillStyle = C.gray;
+    g.beginPath(); g.arc(tip.x, tip.y, s.w * (1.1 + beatP * 1.1), 0, 7); g.fill();
+    g.restore();
+  },
+
+  /* 弹性几何雨：几何体在随机位置 Q 弹冒出，浮动 + 随节拍缩放 */
+  pop(g, inst, t, fade) {
+    inst.shapes.forEach((s, i) => {
+      const k = easeOutBack(prog(t, s.delay));
+      if (k <= 0) return;
+      const y = s.y + Math.sin(t * 2 + i * 1.7) * 7;
+      const sz = s.size * k * (1 + beatP * 0.45);
+      g.globalAlpha = 0.96 * fade;
+      drawPiece(g, s.kind, s.color, s.x, y, sz, s.rot + t * 0.4 * inst.dir + beatP * 0.2 * inst.dir);
+    });
+  },
+
+  /* 巨大十字：横竖两臂依次弹出并旋转定格，随节拍强烈胀缩 */
+  cross(g, inst, t, fade) {
+    const s = inst.shapes[0];
+    const k1 = easeOutBack(prog(t, 0));
+    const k2 = easeOutBack(prog(t, 0.13));
+    if (k1 <= 0) return;
+    g.save();
+    g.translate(inst.cx, inst.cy);
+    g.rotate(inst.rot0 + inst.dir * (1 - k1) * 1.6 + Math.sin(t * 1.3) * 0.07 + beatP * 0.05 * inst.dir);
+    const pulse = 1 + beatP * 0.28;
+    g.scale(pulse, pulse);
+    const L = s.size / 2, w = s.w / 2;
+    g.globalAlpha = fade;
+    g.fillStyle = s.color;
+    g.fillRect(-L * k1, -w, L * 2 * k1, w * 2);
+    if (k2 > 0) g.fillRect(-w, -L * k2, w * 2, L * 2 * k2);
+    g.globalAlpha = 0.6 * fade;
+    g.strokeStyle = C.gray;
+    g.lineWidth = Math.max(2, s.w * 0.28);
+    g.beginPath(); g.arc(0, 0, s.size * 0.68 * k1 * (1 + beatP * 0.2), 0, 7); g.stroke();
+    g.restore();
+  },
+
+  /* 环绕轨道：几何体沿轨道持续环绕中心公转，轨道随节拍收缩膨胀 */
+  orbit(g, inst, t, fade) {
+    inst.shapes.forEach(s => {
+      const k = easeOutCubic(prog(t, s.delay));
+      if (k <= 0) return;
+      const a = s.ang0 + t * s.speed + inst.dir * (1 - k) * 1.8;
+      const R = s.rad * k * (1 + beatP * 0.22);
+      const x = inst.cx + Math.cos(a) * R;
+      const y = inst.cy + Math.sin(a) * R;
+      g.globalAlpha = fade;
+      drawPiece(g, s.kind, s.color, x, y, s.size * (0.6 + 0.4 * k) * (1 + beatP * 0.35), t * 1.2 * inst.dir);
+    });
+    const ck = easeOutBack(prog(t, 0));
+    if (ck > 0) {
+      g.globalAlpha = fade;
+      drawPiece(g, 'circle', C.amber, inst.cx, inst.cy,
+        inst.coreR * ck * (1 + beatP * 0.5), 0);
+    }
+  },
+
+  /* 波浪丝带：四条波浪带交替滑入，持续起伏，振幅随节拍加大 */
+  wave(g, inst, t, fade) {
+    const step = Math.max(14, fxW / 28);
+    for (const s of inst.shapes) {
+      const k = easeOutCubic(prog(t, s.delay, 0.6));
+      if (k <= 0) continue;
+      const off = (1 - k) * (fxW + 120) * s.side;
+      const amp = s.amp * (0.6 + 0.4 * k) * (1 + beatP * 0.8);
+      g.globalAlpha = 0.9 * fade;
+      g.fillStyle = s.color;
+      g.beginPath();
+      for (let x = -60; x <= fxW + 60; x += step) {
+        const y = s.y0 + Math.sin((x / s.wl) * Math.PI * 2 + t * s.speed) * amp;
+        x === -60 ? g.moveTo(x + off, y) : g.lineTo(x + off, y);
+      }
+      for (let x = fxW + 60; x >= -60; x -= step) {
+        const y = s.y0 + s.th * (1 + beatP * 0.3)
+          + Math.sin((x / s.wl) * Math.PI * 2 + t * s.speed + 0.9) * amp;
+        g.lineTo(x + off, y);
+      }
+      g.closePath(); g.fill();
+    }
+  },
+
+  /* 星星弹跳：星星弹性冒出并闪烁自转，随节拍闪烁加剧 */
+  stars(g, inst, t, fade) {
+    inst.shapes.forEach((s, i) => {
+      const k = easeOutElastic(prog(t, s.delay));
+      if (k <= 0) return;
+      const tw = 1 + 0.15 * Math.sin(t * 3.2 + i * 2.1) + beatP * 0.4;
+      g.globalAlpha = 0.97 * fade;
+      drawPiece(g, 'star', s.color, s.x, s.y, s.r * k * tw, s.rot + t * 0.7 * inst.dir);
+    });
+  },
+
+  /* 旋转线栅：圆形视窗内平行线逐条展开，整体旋转，随节拍胀缩增粗 */
+  grid(g, inst, t, fade) {
+    const s = inst.shapes[0];
+    const R = s.radius * (1 + beatP * 0.16 + 0.03 * Math.sin(t * 1.3));
+    g.save();
+    g.translate(inst.cx, inst.cy);
+    g.rotate(inst.rot0 + t * 0.22 * inst.dir + beatP * 0.06 * inst.dir);
+    g.beginPath(); g.arc(0, 0, R, 0, 7); g.clip();
+    for (const ln of s.lines) {
+      const k = easeOutCubic(prog(t, ln.delay));
+      if (k <= 0) continue;
+      g.globalAlpha = 0.92 * fade;
+      g.strokeStyle = ln.color;
+      g.lineWidth = ln.w * (1 + beatP * 0.8);
+      g.beginPath();
+      g.moveTo(-R * k, ln.y);
+      g.lineTo(R * k, ln.y);
+      g.stroke();
+    }
+    g.restore();
+    const ok = easeOutBack(prog(t, 0));
+    if (ok > 0) {
+      g.globalAlpha = fade;
+      g.strokeStyle = C.amber;
+      g.lineWidth = 4 * (1 + beatP * 0.8);
+      g.beginPath(); g.arc(inst.cx, inst.cy, R * ok, 0, 7); g.stroke();
+    }
+  },
+};
+
+/* 折线按可见长度部分描边，返回当前端点 */
+function strokePartial(g, pts, lens, vis) {
+  g.beginPath();
+  g.moveTo(pts[0].x, pts[0].y);
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = lens[i - 1];
+    if (acc + seg <= vis) {
+      g.lineTo(pts[i].x, pts[i].y);
+      acc += seg;
+    } else {
+      const f = seg > 0 ? (vis - acc) / seg : 0;
+      const tx = pts[i - 1].x + (pts[i].x - pts[i - 1].x) * f;
+      const ty = pts[i - 1].y + (pts[i].y - pts[i - 1].y) * f;
+      g.lineTo(tx, ty);
+      return { x: tx, y: ty };
+    }
   }
-  deathFx.push({ ...effect, age: 0, duration: effect.type === 'rabbits' ? 980 : 860, pieces });
-  if (deathFx.length > 8) deathFx.shift();
+  return pts[pts.length - 1];
 }
 
-function drawDeathEffect(effect) {
-  const progress = clamp01(effect.age / effect.duration);
-  const fade = progress < 0.64 ? 1 : 1 - (progress - 0.64) / 0.36;
-  for (const piece of effect.pieces) {
-    const local = clamp01((progress - piece.delay) / 0.82);
-    if (!local) continue;
-    const pop = easeOutBack(Math.min(1, local * 2.8));
-    const drift = Math.min(1, local) * (local < 0.62 ? 1 : 0.76);
-    const x = piece.x + piece.vx * drift;
-    const y = piece.y + piece.vy * drift + Math.sin(effect.age * 0.008 + piece.phase) * 4;
-    const pulse = Math.sin(effect.age * 0.012 + piece.phase);
-    const scale = Math.max(0.01, pop * (1 - Math.max(0, local - 0.72) * 0.2));
+/* 生成一个全屏特效实例（原点固定在屏幕正中心） */
+function buildEffect(type) {
+  const rng = mulberry32((Math.random() * 1e9) | 0);
+  const inst = {
+    type,
+    cx: cx0(), cy: cy0(),
+    t0: 0, state: 'in', outT0: 0,
+    rot0: rng() * Math.PI * 2,
+    dir: rng() < 0.5 ? -1 : 1,
+    shapes: [],
+  };
+  BUILD[type](inst, rng);
+  return inst;
+}
+
+/* 触发全屏特效：新特效叠上，旧特效退场 */
+function spawnEffect(zi, when) {
+  const type = EFFECTS[zi % EFFECTS.length];
+  const now = nowSec();
+
+  for (const e of fxList) {
+    if (e.state !== 'out') { e.state = 'out'; e.outT0 = now; }
+  }
+  while (fxList.length > 6) fxList.shift();   // 快速连打时兜底清理
+
+  const inst = buildEffect(type);
+  inst.t0 = Math.min(when == null ? now : when, now + 0.05);       // 尽量贴节拍，最多延迟 50ms
+  fxList.push(inst);
+}
+
+/* 每帧绘制：固定米白背景 → 各特效（按叠放顺序） */
+function fxFrame(now) {
+  fx2d.clearRect(0, 0, fxW, fxH);
+
+  for (let i = fxList.length - 1; i >= 0; i--) {
+    const inst = fxList[i];
+    let outK = 0;
+    if (inst.state === 'out') {
+      outK = clamp01((now - inst.outT0) / FX_OUT);
+      if (outK >= 1) { fxList.splice(i, 1); continue; }   // 退场完毕，移除
+    }
+    const t = now - inst.t0;
+    if (t < 0) continue;                                  // 等待节拍点
+
+    // 常驻特效整体随节拍呼吸；退场特效整体淡出 + 缩小
+    const fade = 1 - smooth(outK);
+    const sc = inst.state === 'out' ? 1 - 0.22 * outK : 1 + beatP * 0.05;
     fx2d.save();
-    fx2d.translate(x, y);
-    fx2d.scale(scale, scale);
-    drawDeathPiece(
-      fx2d,
-      effect.type,
-      piece.size,
-      effect.color,
-      piece.rotation + piece.spin * local,
-      fade * (1 - Math.max(0, local - 0.82) * 4),
-      pulse,
-    );
+    fx2d.translate(inst.cx, inst.cy);
+    fx2d.scale(sc, sc);
+    fx2d.translate(-inst.cx, -inst.cy);
+    DRAW[inst.type](fx2d, inst, t, fade);
     fx2d.restore();
   }
 }
 
-function drawFx(time) {
-  const delta = Math.min(32, time - frameTime || 16);
-  frameTime = time;
-  fx2d.clearRect(0, 0, innerWidth, innerHeight);
-  for (let i = deathFx.length - 1; i >= 0; i -= 1) {
-    const effect = deathFx[i];
-    effect.age += delta;
-    if (effect.age >= effect.duration) {
-      deathFx.splice(i, 1);
-      continue;
-    }
-    drawDeathEffect(effect);
+function drawFx() {
+  const now = nowSec();
+  if (started && audio && musicStartTime) {
+    const phase = (((audio.currentTime - musicStartTime) / SPB) % 1 + 1) % 1;
+    beatP = Math.pow(1 - phase, 2.4);
+  } else {
+    beatP = 0;
   }
+  fxFrame(now);
   requestAnimationFrame(drawFx);
 }
 
