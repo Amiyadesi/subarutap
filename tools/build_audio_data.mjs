@@ -13,9 +13,18 @@ const rootDir = path.dirname(toolsDir);
 const audioDir = path.join(rootDir, 'audio');
 const outputPath = path.join(rootDir, 'audio-data.js');
 const sampleFiles = Object.freeze({
-  da: 'da.wav',
-  gou: 'gou.wav',
-  jiao: 'jiao.wav',
+  voice_01: 'voice_01.wav',
+  voice_02: 'voice_02.wav',
+  voice_03: 'voice_03.wav',
+  voice_04: 'voice_04.wav',
+  voice_05: 'voice_05.wav',
+  voice_06: 'voice_06.wav',
+  voice_07: 'voice_07.wav',
+  voice_08: 'voice_08.wav',
+  voice_09: 'voice_09.wav',
+  voice_10: 'voice_10.wav',
+  voice_11: 'voice_11.wav',
+  voice_12: 'voice_12.wav',
 });
 
 const entries = Object.entries(sampleFiles).map(([sampleName, relativePath]) => {

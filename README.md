@@ -4,9 +4,9 @@
 
 ## Audio
 
-音效来自本地 `8月10日.FLAC` 的三个短段，经过单声道转换、淡入淡出和限幅后嵌入 `audio-data.js`。运行时用 Web Audio `playbackRate` 将三个音色分别映射到 G4、E4、C4、A3，避免随机点击出现半音冲突。
+惨叫音效来自用户提供的纯人声 `audio [vocals].wav`，从原文件中挑选 12 个不同高能片段，保持原始双声道 PCM 波形；运行时不做变调、不合成新惨叫，只做每段响度平衡。原始长音频不提交，运行时片段嵌入 `audio-data.js`。
 
-本项目不提交原始 FLAC。
+BGM 使用仓库内原创 `audio/bgm_rhythm.wav`，120 BPM、A 小调暗色节奏循环，无外部素材授权依赖。
 
 ## Credits
 
