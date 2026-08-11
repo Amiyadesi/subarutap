@@ -1,12 +1,12 @@
 # Subaru Tap
 
-菜月昴惨叫音阶应援器。借鉴 Mikutap 的全屏触控形式，横屏为 3 种音色 x 4 个固定音阶，竖屏自动重排；支持触控、拖动和 QWER / ASDF / ZXCV 键盘输入。
+菜月昴惨叫音阶应援器。借鉴 Mikutap 与 Dagou Tap 的全屏触控形式，使用 3 种原版惨叫 x 4 个固定音阶；支持触控和 QWER / ASDF / ZXCV 键盘输入。
 
 ## Audio
 
-惨叫音效来自用户提供的纯人声 `audio [vocals].wav`，从原文件中挑选 12 个不同高能片段，保持原始双声道 PCM 波形；运行时不做变调、不合成新惨叫，只做每段响度平衡。原始长音频不提交，运行时片段嵌入 `audio-data.js`。
+惨叫音效来自用户提供的纯人声 `audio [vocals].wav`，从原文件中挑选 3 个自然“啊”片段，保持原始双声道 PCM 波形。每个片段运行时固定映射到 D5、C5、A4、G4；不合成新惨叫、不循环。原始长音频不提交，运行时片段嵌入 `audio-data.js`。
 
-BGM 使用仓库内原创 `audio/bgm_rhythm.wav`，120 BPM、A 小调暗色节奏循环，无外部素材授权依赖。
+BGM 使用 Web Audio 实时生成的 128 BPM 节奏，和弦为 C-G-Am-F，无音频循环接缝。
 
 ## Credits
 
