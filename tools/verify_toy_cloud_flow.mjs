@@ -15,7 +15,7 @@ assert.match(main, /avatar\.src = 'Image\/subaru_cat\.png';/);
 assert.match(main, /function spawnCorpse\(type\)/);
 assert.match(html, /@keyframes corpse-drop/);
 assert.match(html, /grayscale\(1\)/);
-assert.match(html, /main\.js\?v=12/);
+assert.match(html, /main\.js\?v=13/);
 assert.match(html, /audio-data\.js\?v=12/);
 assert.match(html, /\.avatar-frame\.is-hit \.avatar/);
 assert.match(html, /main \{[^}]*z-index: 6/);
@@ -32,6 +32,8 @@ assert.match(html, /68% \{ opacity: 1; transform: translate\(var\(--corpse-x\).*
 assert.match(main, /corpseLaunchIndex = \(corpseLaunchIndex \+ 5\) % 24/);
 assert.match(main, /Math\.min\(innerWidth, innerHeight\) \* 0\.42/);
 assert.match(main, /function avatarRotation\(\)/);
+assert.match(main, /avatar\.removeAttribute\('srcset'\)/);
+assert.match(main, /avatar\.removeAttribute\('sizes'\)/);
 assert.match(main, /new DOMMatrixReadOnly\(transform\)/);
 assert.match(main, /--corpse-start-rotate/);
 assert.match(main, /--avatar-pulse/);
